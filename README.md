@@ -37,6 +37,29 @@ Better Auth + Neon Postgres. 12 files including middleware, lib/auth.js, Server 
 
 The `db_architect` agent in `finalize-app.yaml` decides which path based on the app description.
 
+## Dependencies
+
+### agency-orchestrator (`ao`)
+
+The pipeline uses `ao` — a multi-agent workflow engine with 199 built-in AI roles. The roles (db_architect, frontend_coder, qa_reviewer, product-manager, etc.) are **bundled inside the npm package** — they are not in this repo.
+
+Install on a new machine:
+
+```bash
+npm install -g agency-orchestrator
+ao init --lang en    # optional: pre-cache English role definitions
+```
+
+Verify: `ao --version` and `ao roles` should list 199 roles.
+
+The workflows reference `agents_dir: "agency-agents"`. When no local `agency-agents/` folder exists (the default), `ao` falls back to its bundled `agency-agents-zh` library automatically.
+
+### Other dependencies
+
+- `hermes` CLI — the AI agent runtime (provides `ao` indirectly via Hermes install)
+- `python3` with `requests`, `neon-api`, `Pillow` (for `deploy-app.py`)
+- `gh` CLI — GitHub repo creation
+
 ## Required .env Keys
 
 ```
