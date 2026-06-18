@@ -1,0 +1,127 @@
+name: "App Builder — Update"
+description: "Analyze the user's update request against the existing code and output minimal, surgical changes."
+
+agents_dir: "agency-agents"
+
+llm:
+  provider: claude-code
+  max_tokens: 8192
+  timeout: 300000
+  retry: 2
+
+concurrency: 1
+
+inputs:
+  - name: tg_user_id
+    required: true
+  - name: repo_name
+    required: true
+  - name: update_request
+    required: true
+  - name: existing_file_list
+    required: false
+  - name: existing_code
+    required: false
+
+steps:
+  - id: change_analyzer
+    role: "product/product-manager"
+    name: "Change Analyst"
+    emoji: "🔍"
+    task: |
+      The user wants to update their app. Analyze the request and its blast radius.
+
+      Update request: {{update_request}}
+
+      Existing file list:
+      {{existing_file_list}}
+
+      Existing app info:
+      - Repo name: {{repo_name}}
+      - Telegram User ID: {{tg_user_id}}
+
+      Output:
+
+      ## 1. Change type
+      Classify the change:
+      - UI/UX change (styling and layout only)
+      - Feature addition (needs new components or new API calls)
+      - Feature modification (changes existing logic)
+      - Database change (needs new tables, columns, or schema changes)
+
+      ## 2. Affected files
+      List the files to modify (exact filenames), and what each change is.
+
+      ## 3. Database change needed?
+      If yes: describe the new tables or columns.
+      If no: state clearly "No database change".
+
+      ## 4. Change summary
+      One sentence describing this update (used as the git commit message).
+    output: change_analysis
+
+  - id: db_migration
+    role: "engineering/engineering-software-architect"
+    name: "Database Migrator"
+    emoji: "🗄️"
+    task: |
+      Based on the change analysis, generate a database migration SQL (if needed).
+
+      Change analysis: {{change_analysis}}
+      Telegram User ID: {{tg_user_id}}
+
+      This app uses an isolated Neon Postgres project (Data API + Neon Auth).
+      Tables have NO prefix; the identity function is `auth.user_id()`.
+
+      If the change analysis says "No database change", output:
+      ```sql
+      -- NO_MIGRATION_NEEDED
+      ```
+
+      If a database change is needed, output the full migration SQL:
+      ```sql
+      -- migration.sql
+      -- Additive only — never drop existing data
+      -- ALTER TABLE, CREATE TABLE, CREATE INDEX, etc.
+      -- New tables also need RLS policies (owner_id = auth.user_id(), TO authenticated)
+      ```
+    output: migration_sql
+    depends_on: [change_analyzer]
+
+  - id: code_modifier
+    role: "engineering/engineering-frontend-developer"
+    name: "Frontend Surgeon"
+    emoji: "⚛️"
+    task: |
+      Modify the existing code files per the change analysis.
+
+      Change analysis: {{change_analysis}}
+      Migration SQL: {{migration_sql}}
+
+      Existing code:
+      {{existing_code}}
+
+      ━━━ Surgical-change rules (follow strictly) ━━━
+
+      Core law: **every changed line must trace directly back to the user's update request.**
+
+      - Touch only what must be touched: don't "improve" adjacent code, comments, or formatting
+      - Don't refactor what isn't broken: keep the existing style even if you'd write it differently
+      - Don't change file structure or naming conventions
+      - Preserve all existing functionality; only add/modify what the change analysis explicitly lists
+      - Don't introduce new dependencies (unless the change analysis explicitly requires them)
+      - If your change makes some import/variable unused, clean up **only the orphans you created**;
+        do NOT delete pre-existing unrelated dead code
+      - Minimal code to solve it: if dark mode needs 20 lines, don't rewrite 200
+
+      Self-check: would a senior engineer say "this change is excessive"? If so, rein it in.
+
+      Output format: for each file to modify, output its full modified content in a code block:
+
+      **`src/pages/MainApp.jsx`**
+      ```jsx
+      // full modified file content...
+      ```
+
+      Only output files that changed.
+    depends_on: [change_analyzer, db_migration]

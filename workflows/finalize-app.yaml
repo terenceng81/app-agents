@@ -1,0 +1,424 @@
+name: "App Builder — Finalize"
+description: "Fixed quality gate: turn the dynamic team's design into deployable Next.js 14 full-stack code. Enforces frontend-design aesthetics + karpathy clean code + parseable output format."
+
+agents_dir: "agency-agents"
+
+llm:
+  provider: claude-code
+  max_tokens: 8192
+  timeout: 300000
+  retry: 2
+
+concurrency: 1
+
+inputs:
+  - name: description
+    required: true
+  - name: tg_user_id
+    required: true
+  - name: spec
+    required: true
+
+steps:
+  - id: db_architect
+    role: "engineering/engineering-backend-architect"
+    name: "Database Architect"
+    emoji: "🗄️"
+    task: |
+      Based on the upstream team's design, decide on and design the database
+      (target platform: Neon Postgres, accessed via server-side Next.js).
+
+      Original user requirement: {{description}}
+      Telegram User ID: {{tg_user_id}}
+
+      Upstream design:
+      {{spec}}
+
+      ## App Slug
+      First pick a short English slug for this app (kebab-case, e.g. budget-tracker,
+      habit-log), and output it on its own line at the very top (strict format):
+      `REPO_SLUG: your-slug-here`
+
+      Then decide whether this app needs a cloud database:
+      - **Not needed**: pure tools (calculator, converter, timer), no data to persist → output `-- NO_DATABASE_NEEDED`
+      - **localStorage is enough**: personal notes/todos, no login or cross-device sync → output `-- NO_DATABASE_NEEDED`
+      - **Needs Neon**: requires login, multi-device sync, or multiple users → design a full schema
+
+      **If no database is needed:**
+      ```sql
+      -- NO_DATABASE_NEEDED
+      ```
+      Briefly explain why, then stop.
+
+      **If Neon is needed:** output a complete schema.sql with two sections:
+
+      **Section 1 — Better Auth tables (copy exactly, do not modify):**
+      ```sql
+      -- schema.sql
+      CREATE TABLE IF NOT EXISTS "user" (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        "emailVerified" BOOLEAN NOT NULL DEFAULT FALSE,
+        image TEXT,
+        "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS session (
+        id TEXT PRIMARY KEY,
+        "expiresAt" TIMESTAMPTZ NOT NULL,
+        token TEXT NOT NULL UNIQUE,
+        "ipAddress" TEXT,
+        "userAgent" TEXT,
+        "userId" TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+        "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS account (
+        id TEXT PRIMARY KEY,
+        "accountId" TEXT NOT NULL,
+        "providerId" TEXT NOT NULL,
+        "userId" TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+        password TEXT,
+        "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS verification (
+        id TEXT PRIMARY KEY,
+        identifier TEXT NOT NULL,
+        value TEXT NOT NULL,
+        "expiresAt" TIMESTAMPTZ NOT NULL,
+        "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      ```
+
+      **Section 2 — App-specific tables:**
+      - Every table: `id UUID PRIMARY KEY DEFAULT gen_random_uuid()`, `owner_id TEXT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE`, `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+      - No RLS needed — server-side auth handles access control
+      - Use short table names, public schema, no prefix
+      - Design only what the app actually needs; no speculative columns
+
+      Output both sections in a single ```sql block starting with `-- schema.sql`.
+    output: db_schema
+
+  - id: frontend_coder
+    role: "engineering/engineering-frontend-developer"
+    name: "Full-Stack Developer"
+    emoji: "⚛️"
+    task: |
+      Turn the design into a complete, deployable Next.js 14 full-stack application.
+      Output each file with a bold filename heading followed immediately by the code block.
+      Strict format: **`path/to/filename`** then the code block. No other structure.
+
+      Original user requirement: {{description}}
+      Upstream design: {{spec}}
+      Database plan: {{db_schema}}
+
+      ━━━ Tech stack (mandatory — do not change) ━━━
+      - Next.js 14 App Router, full-stack (frontend + API in one repo)
+      - Deployed to Vercel (zero-config)
+      - Styling: plain CSS with CSS variables in globals.css — no Tailwind, no CSS-in-JS
+      - NO Vite, NO React Native, NO Next.js Pages Router, NO separate backend service
+      - Auth + DB are conditional — see "Required files" below
+
+      ━━━ Design principles (goal: not look AI-generated) ━━━
+      First commit to a **bold, deliberate** aesthetic direction and carry it through:
+      - Pick one that genuinely fits: minimalist / maximalist / retro-futuristic /
+        organic-natural / luxe-refined / playful-toy / editorial-magazine /
+        brutalist / geometric-art-deco / soft-macaron / industrial-utilitarian
+
+      Typography:
+      - ❌ Never use Inter, Roboto, Arial, system-ui, Space Grotesk (AI clichés)
+      - ✅ Pick a characterful display font + refined body font from Google Fonts (loaded in layout.js)
+      Color:
+      - ❌ Never "purple gradient on white"
+      - ✅ CSS variables: strong primary + sharp accent; alternate light/dark themes each build
+      Motion & background:
+      - One choreographed page load (staggered via animation-delay) beats scattered micro-interactions
+      - Use gradient meshes / noise texture / geometric patterns for background, not flat color
+      Layout:
+      - Asymmetry, overlap, broken grids — avoid the uniform centered card
+
+      ━━━ Code principles (karpathy) ━━━
+      - Minimal viable code; no speculative abstractions; no config for single-use things
+      - No TODOs, no ellipses — every file complete and runnable
+      - Would a senior engineer call it over-engineered? If so, rein it in
+
+      ━━━ Required files — READ {{db_schema}} FIRST to decide which path ━━━
+
+      Always generate (every app regardless of DB):
+      **`jsconfig.json`**
+      **`app/layout.js`**
+      **`app/globals.css`**
+
+      ── PATH A: if {{db_schema}} contains `-- NO_DATABASE_NEEDED` ──────────────
+      Simple app — no auth, no database. Do NOT generate any auth or DB files.
+      **`package.json`** (next/react/react-dom only — no better-auth, no pg)
+      **`next.config.js`** (minimal — no serverComponentsExternalPackages needed)
+      **`app/page.js`** (full app UI as a direct 'use client' component — no SSR wrapper needed)
+
+      ── PATH B: if {{db_schema}} contains a real SQL schema ─────────────────────
+      Full stack — auth + Neon Postgres. Generate ALL of the following:
+      **`package.json`** (with better-auth, pg, @neondatabase/serverless)
+      **`next.config.js`** (with experimental.serverComponentsExternalPackages)
+      **`middleware.js`**
+      **`lib/auth.js`**
+      **`lib/auth-client.js`**
+      **`lib/db.js`**
+      **`app/api/auth/[...all]/route.js`**
+      **`app/page.js`** (thin dynamic wrapper — no 'use client')
+      **`app/_client.js`** (auth UI — 'use client')
+      **`app/app/page.js`** (thin dynamic wrapper — no 'use client')
+      **`app/app/_client.js`** (main app UI — 'use client')
+      **`app/app/actions.js`**
+
+      ━━━ Exact templates (follow precisely — these are battle-tested) ━━━
+
+      **`jsconfig.json`** — required for @/ path alias (CRITICAL — without this, all @/ imports fail at build):
+      ```json
+      {
+        "compilerOptions": {
+          "paths": {
+            "@/*": ["./*"]
+          }
+        }
+      }
+      ```
+
+      ── PATH A templates ──
+
+      **`package.json`** (PATH A — no auth/DB):
+      ```json
+      {
+        "name": "app",
+        "version": "0.1.0",
+        "private": true,
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "dependencies": {
+          "next": "14.2.29",
+          "react": "^18",
+          "react-dom": "^18"
+        }
+      }
+      ```
+
+      **`next.config.js`** (PATH A — minimal):
+      ```js
+      /** @type {import('next').NextConfig} */
+      const nextConfig = {}
+      module.exports = nextConfig
+      ```
+
+      **`app/page.js`** (PATH A — direct 'use client', no SSR wrapper needed since no better-auth):
+      - `'use client'` on line 1
+      - Full app UI lives directly here — no `_client.js` split needed
+      - Use React state for all interactivity
+      - Store data in localStorage if persistence is needed
+
+      ── PATH B templates ──
+
+      **`package.json`** (PATH B — full auth + DB):
+      ```json
+      {
+        "name": "app",
+        "version": "0.1.0",
+        "private": true,
+        "scripts": {
+          "dev": "next dev",
+          "build": "next build",
+          "start": "next start"
+        },
+        "dependencies": {
+          "next": "14.2.29",
+          "react": "^18",
+          "react-dom": "^18",
+          "better-auth": "^1.2.7",
+          "@neondatabase/serverless": "^0.10.4",
+          "pg": "^8.13.3"
+        }
+      }
+      ```
+
+      **`next.config.js`** (PATH B — MUST use experimental.serverComponentsExternalPackages,
+      the Next.js 14 API — NOT serverExternalPackages which is Next.js 15+):
+      ```js
+      /** @type {import('next').NextConfig} */
+      const nextConfig = {
+        experimental: {
+          serverComponentsExternalPackages: ['better-auth', 'pg'],
+        },
+      }
+      module.exports = nextConfig
+      ```
+
+      **`middleware.js`** (PATH B — protect /app route):
+      ```js
+      import { NextResponse } from 'next/server'
+      import { getSessionCookie } from 'better-auth/cookies'
+      export function middleware(request) {
+        const session = getSessionCookie(request)
+        if (!session && request.nextUrl.pathname.startsWith('/app')) {
+          return NextResponse.redirect(new URL('/', request.url))
+        }
+        return NextResponse.next()
+      }
+      export const config = { matcher: ['/app/:path*'] }
+      ```
+
+      **`lib/auth.js`** (PATH B — server-side Better Auth config):
+      ```js
+      import { betterAuth } from 'better-auth'
+      import { Pool } from 'pg'
+      export const auth = betterAuth({
+        secret: process.env.AUTH_SECRET,
+        database: new Pool({ connectionString: process.env.DATABASE_URL }),
+        emailAndPassword: { enabled: true },
+        trustedOrigins: [process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'],
+      })
+      ```
+
+      **`lib/auth-client.js`** (PATH B — browser-side Better Auth client):
+      ```js
+      import { createAuthClient } from 'better-auth/react'
+      export const authClient = createAuthClient({
+        baseURL: typeof window !== 'undefined'
+          ? window.location.origin
+          : process.env.NEXT_PUBLIC_APP_URL,
+      })
+      ```
+
+      **`app/api/auth/[...all]/route.js`** (PATH B — Better Auth HTTP handler):
+      ```js
+      import { auth } from '@/lib/auth'
+      import { toNextJsHandler } from 'better-auth/next-js'
+      export const { GET, POST } = toNextJsHandler(auth)
+      ```
+
+      **`lib/db.js`** (PATH B — Neon HTTP SQL client):
+      ```js
+      import { neon } from '@neondatabase/serverless'
+      export const sql = neon(process.env.DATABASE_URL)
+      ```
+
+      ━━━ PATH B auth flow (battle-tested — follow exactly or login fails) ━━━
+
+      **`app/page.js`** (PATH B — thin server wrapper, NO 'use client'):
+      ```js
+      import dynamic from 'next/dynamic'
+      const Page = dynamic(() => import('./_client'), { ssr: false, loading: () => null })
+      export default Page
+      ```
+      CRITICAL: better-auth's React client (authClient.useSession → react-store.mjs → useRef)
+      crashes during Next.js SSR because ReactCurrentDispatcher.current is null server-side.
+      `force-dynamic` does NOT fix this — the component is still SSR'd. The ONLY fix is
+      `ssr: false` via next/dynamic. Put all actual auth logic in `app/_client.js`.
+
+      **`app/_client.js`** (PATH B — actual home + auth page, 'use client' component):
+      - `'use client'` on line 1 (no force-dynamic needed here)
+      - Use `authClient.useSession()` → `{ data: session, isPending }`
+      - If `isPending`: render loading state
+      - If `session`: `window.location.href = '/app'` (full page redirect, not router.push)
+      - Show sign-up / sign-in form (toggle between modes)
+      - Sign up: `await authClient.signUp.email({ email, password, name: email.split('@')[0] })`
+      - Sign in: `await authClient.signIn.email({ email, password })`
+      - On success (no `result.error`): `window.location.href = '/app'`
+      - Show error message if `result.error`
+
+      **`app/app/page.js`** (PATH B — thin server wrapper, NO 'use client'):
+      ```js
+      import dynamic from 'next/dynamic'
+      const AppPage = dynamic(() => import('./_client'), { ssr: false, loading: () => null })
+      export default AppPage
+      ```
+
+      **`app/app/_client.js`** (PATH B — actual protected app page, 'use client' component):
+      - `'use client'` on line 1
+      - Use `authClient.useSession()` for user info
+      - Import and call Server Actions from `./actions`
+      - Sign out: `await authClient.signOut()` then `window.location.href = '/'`
+      - Middleware already blocks unauthenticated access — no redundant redirect needed here
+
+      **`app/app/actions.js`** (PATH B — Server Actions):
+      ```js
+      'use server'
+      import { auth } from '@/lib/auth'
+      import { headers } from 'next/headers'
+      import { sql } from '@/lib/db'
+
+      async function requireUser() {
+        const session = await auth.api.getSession({ headers: await headers() })
+        if (!session?.user) throw new Error('Unauthorized')
+        return session.user
+      }
+      // Add app-specific actions below:
+      // export async function getItems() {
+      //   const user = await requireUser()
+      //   return sql`SELECT * FROM items WHERE owner_id = ${user.id} ORDER BY created_at DESC`
+      // }
+      // export async function addItem(data) {
+      //   const user = await requireUser()
+      //   return sql`INSERT INTO items (owner_id, ...) VALUES (${user.id}, ...) RETURNING *`
+      // }
+      ```
+
+      ━━━ app/layout.js ━━━
+      - MUST start with `import './globals.css'` — global styles must load via layout, not page.js
+      - Import Google Fonts via `<link>` in the `<head>` (not next/font — keep it simple)
+      - Apply chosen design's CSS variables and base styles
+      - `metadata` export with app name + description
+      - Wrap children in a semantic `<main>` or layout container
+
+      ━━━ app/globals.css ━━━
+      - Define all design tokens as CSS variables on `:root`
+      - Include base reset, font-face assignments, animation keyframes
+      - No utility classes — style by component class names in page files
+
+      ━━━ Multi-page routing ━━━
+      If the spec describes multiple distinct sections (e.g. Dashboard + Settings + History):
+      - Generate proper App Router routes: app/{route}/page.js (+ _client.js if PATH B)
+      - app/layout.js handles shared nav between routes
+      - Keep each route file focused — one responsibility per file
+      Single-view apps: keep everything in app/page.js (PATH A) or app/app/page.js (PATH B)
+    output: frontend_code
+    depends_on: [db_architect]
+
+  - id: qa_reviewer
+    role: "engineering/engineering-backend-architect"
+    name: "QA Reviewer"
+    emoji: "🔍"
+    task: |
+      Review the generated Next.js 14 code for deployment-blocking bugs.
+      Re-emit ONLY files that need fixes, using the exact same format:
+      **`path/to/filename`** then the corrected code block.
+
+      Database decision: {{db_schema}}
+      Generated code: {{frontend_code}}
+
+      Check for these issues in order:
+
+      1. **PATH mismatch** — if {{db_schema}} contains `-- NO_DATABASE_NEEDED`, flag any
+         file that imports better-auth, pg, or @neondatabase/serverless. Remove those imports
+         and simplify the file to a plain 'use client' component.
+
+      2. **Missing 'use client'** — any file using useState, useEffect, useRef, authClient,
+         or event handlers that lacks `'use client'` on line 1. Add it.
+
+      3. **PATH B SSR crash** — app/page.js or app/app/page.js must NOT import authClient
+         directly. They must use `next/dynamic` with `ssr: false`. If they don't, fix them.
+
+      4. **next/dynamic with ssr: false in PATH A** — unnecessary since no better-auth.
+         Replace with a direct 'use client' component. Remove the dynamic wrapper.
+
+      5. **'use server' + 'use client' in the same file** — illegal in Next.js. Split the file.
+
+      6. **Missing jsconfig.json** — if not present in the file list, emit it now with the
+         correct @/ alias.
+
+      If NO issues found: output exactly one line: `-- NO_FIXES_NEEDED`
+      If issues found: re-emit only the corrected files. Do not repeat correct files.
+    output: qa_fixes
+    depends_on: [frontend_coder]
